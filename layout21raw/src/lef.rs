@@ -9,7 +9,7 @@ use std::collections::hash_map::Entry;
 use std::convert::{TryFrom, TryInto};
 
 // Local imports
-use crate::utils::{ErrorContext, ErrorHelper, Ptr};
+use crate::utils::{ErrorContext, ErrorHelper, Ptr, Unwrapper};
 use crate::{
     Abstract, AbstractPort, Cell, Int, Layer, LayerKey, Layers, LayoutError, LayoutResult, Library,
     Path, Point, Polygon, Rect, Shape, Units,
@@ -130,10 +130,9 @@ impl<'lib> LefExporter<'lib> {
     /// Lef layers are just string identifiers, returned here as-is.
     fn export_layer(&self, layerkey: LayerKey) -> LayoutResult<String> {
         let layers = self.lib.layers.read()?;
-        let name = self.unwrap(
-            layers.get_name(layerkey),
-            "Invalid un-named layer for LEF export".to_string(),
-        )?;
+        let name = layers
+            .get_name(layerkey)
+            .unwrapper(self, format!("Invalid un-named layer for LEF export"))?;
         Ok(name.to_string())
     }
     /// Export a [Shape] to a [lef21::LefGeometry]
@@ -141,7 +140,7 @@ impl<'lib> LefExporter<'lib> {
         // Conver to a [LefShape]
         let inner: lef21::LefShape = match shape {
             Shape::Rect(ref r) => {
-                lef21::LefShape::Rect(self.export_point(&r.p0)?, self.export_point(&r.p1)?)
+                lef21::LefShape::Rect(None, self.export_point(&r.p0)?, self.export_point(&r.p1)?)
             }
             Shape::Polygon(ref poly) => {
                 let points = poly
@@ -261,7 +260,7 @@ impl LefImporter {
         // Create an outline-rectangle.
         let outline = {
             // Grab a [Point] from the `size` field
-            let lefsize = self.unwrap(lefmacro.size.as_ref(), "Missing LEF size")?;
+            let lefsize = lefmacro.size.as_ref().unwrapper(self, "Missing LEF size")?;
             let lefsize = lef21::LefPoint::new(lefsize.0, lefsize.1);
             let Point { x, y } = self.import_point(&lefsize)?;
 
@@ -387,7 +386,7 @@ impl LefImporter {
     ) -> LayoutResult<Shape> {
         use lef21::LefShape::{Path, Polygon, Rect};
         match lefshape {
-            Rect(ref p0, ref p1) => self.import_rect((p0, p1)),
+            Rect(_, ref p0, ref p1) => self.import_rect((p0, p1)),
             Polygon(ref pts) => self.import_polygon(pts),
             Path(ref pts) => self.import_path(pts, layer),
         }
@@ -414,7 +413,9 @@ impl LefImporter {
     ) -> LayoutResult<Shape> {
         // Paths require that `layer` have a `width` attribute.
         // And *our* paths are integer-width'ed, so they better have a zero-valued fractional part.
-        let width = self.unwrap(layer.width, "Invalid LEF Path with no Width")?;
+        let width = layer
+            .width
+            .unwrapper(self, "Invalid LEF Path with no Width")?;
         let width = self.import_dist(&width)?;
         let width = usize::try_from(width)?;
         // Convert each of the Points

@@ -2,11 +2,21 @@
 //! # Gds21 Reading & Scanning
 //!
 
+// Std-Lib Imports
+use std::convert::TryInto;
+use std::io::{Cursor, SeekFrom};
+use std::path::Path;
+
+// Crates.io
+use byteorder::{BigEndian, ReadBytesExt};
+use num_traits::FromPrimitive;
+
 // Local imports
-use super::*;
+use crate::data::*;
 
 /// Size (in bytes) of the read/decode buffer array
 const READER_BUFSIZE: usize = 65537;
+
 /// # GdsReader
 /// Helper for parsing and scanning GDS coming from files and similar sources.
 pub struct GdsReader<R> {
@@ -87,7 +97,8 @@ where
                 version: self.read_i16(len)?[0],
             },
             (GdsRecordType::BgnLib, I16, 24) => GdsRecord::BgnLib {
-                dates: self.read_i16(len)?,
+                // Note the `try/unwrap` conversion here is infallible, since we know the length is 24 bytes / 12 i16s.
+                dates: self.read_i16(24)?.try_into().unwrap(),
             },
             (GdsRecordType::LibName, Str, _) => GdsRecord::LibName(self.read_str(len)?),
             (GdsRecordType::Units, F64, 16) => {
@@ -98,7 +109,8 @@ where
 
             // Structure (Cell) Level Records
             (GdsRecordType::BgnStruct, I16, 24) => GdsRecord::BgnStruct {
-                dates: self.read_i16(len)?,
+                // Note the `try/unwrap` conversion here is infallible, since we know the length is 24 bytes / 12 i16s.
+                dates: self.read_i16(24)?.try_into().unwrap(),
             },
             (GdsRecordType::StructName, Str, _) => GdsRecord::StructName(self.read_str(len)?),
             (GdsRecordType::StructRefName, Str, _) => GdsRecord::StructRefName(self.read_str(len)?),
@@ -155,7 +167,10 @@ where
             (GdsRecordType::BeginExtn, I32, 4) => GdsRecord::BeginExtn(self.read_i32(len)?[0]),
             (GdsRecordType::EndExtn, I32, 4) => GdsRecord::EndExtn(self.read_i32(len)?[0]),
             (GdsRecordType::TapeNum, I16, 2) => GdsRecord::TapeNum(self.read_i16(len)?[0]),
-            (GdsRecordType::TapeCode, I16, 12) => GdsRecord::TapeCode(self.read_i16(len)?),
+            (GdsRecordType::TapeCode, I16, 12) => {
+                // Note the `try/unwrap` combination here is infalliable, since we know the length is 12 bytes / 6 i16s.
+                GdsRecord::TapeCode(self.read_i16(12)?.try_into().unwrap())
+            }
             (GdsRecordType::Format, I16, 2) => GdsRecord::Format(self.read_i16(len)?[0]),
             (GdsRecordType::Mask, Str, _) => GdsRecord::Mask(self.read_str(len)?),
             (GdsRecordType::EndMasks, NoData, 0) => GdsRecord::EndMasks,
@@ -296,7 +311,7 @@ where
         }
         // Decode a new header and swap it with our `nxt`
         let mut rv = self.rdr.read_record_header()?;
-        mem::swap(&mut rv, &mut self.nxt);
+        std::mem::swap(&mut rv, &mut self.nxt);
         Ok(rv)
     }
     /// Skip over the current record's content, if any, and load the next.
@@ -341,7 +356,7 @@ where
     fn scan_struct(&mut self) -> GdsResult<GdsStructScan> {
         // Create our scan-structure, and store the start-position of the struct.
         // Note this requires backing up the four header bytes.
-        let mut s = read::GdsStructScan {
+        let mut s = GdsStructScan {
             start: self.pos() - 4,
             ..Default::default()
         };
@@ -414,7 +429,7 @@ impl GdsParser<std::fs::File> {
 
     /// JSON-Serialize and write (all) contents of the Iterator to `writer`
     #[cfg(test)]
-    pub fn write_records(&mut self, writer: &mut impl Write) -> GdsResult<()> {
+    pub fn write_records(&mut self, writer: &mut impl std::io::Write) -> GdsResult<()> {
         loop {
             let r = self.next()?;
             if r == GdsRecord::EndLib {
@@ -430,11 +445,13 @@ impl GdsParser<std::fs::File> {
     /// Open a GDS file `gds` and write all GdsRecords to JSON file `json`
     #[cfg(test)]
     pub fn dump(gds: &str, json: &str) -> GdsResult<()> {
+        use std::io::{BufWriter, Write};
+
         // This streams one record at a time, rather than loading all into memory.
         // Create a ReaderIter from `gds`
         let mut me = GdsParser::open(gds)?;
         // Create the JSON file
-        let mut w = BufWriter::new(File::create(json)?);
+        let mut w = BufWriter::new(std::fs::File::create(json)?);
         // Write it as a JSON list/sequence; add the opening bracket
         writeln!(w, "[")?;
         // Write all the records
@@ -476,7 +493,7 @@ where
         }
         // Decode a new Record and swap it with our `nxt`
         let mut rv = self.rdr.read_record()?;
-        mem::swap(&mut rv, &mut self.nxt);
+        std::mem::swap(&mut rv, &mut self.nxt);
         self.numread += 1;
         Ok(rv)
     }
@@ -496,7 +513,7 @@ where
         };
         // Read the begin-lib
         lib = match self.next()? {
-            GdsRecord::BgnLib { dates: d } => lib.dates(self.parse_datetimes(d)?),
+            GdsRecord::BgnLib { dates: d } => lib.dates(self.parse_datetimes(&d)),
             _ => return self.fail("Invalid library: missing GDS BGNLIB record"),
         };
         // Iterate over all others
@@ -507,7 +524,7 @@ where
                 GdsRecord::LibName(d) => lib.name(d),
                 GdsRecord::Units(d0, d1) => lib.units(GdsUnits(d0, d1)),
                 GdsRecord::BgnStruct { dates } => {
-                    let strukt = self.parse_struct(dates)?;
+                    let strukt = self.parse_struct(&dates)?;
                     structs.push(strukt);
                     lib
                 }
@@ -531,11 +548,11 @@ where
         Ok(lib.build()?)
     }
     /// Parse a cell ([GdsStruct])
-    fn parse_struct(&mut self, dates: Vec<i16>) -> GdsResult<GdsStruct> {
+    fn parse_struct(&mut self, dates: &[i16; 12]) -> GdsResult<GdsStruct> {
         self.ctx.push(GdsContext::Struct);
         let mut strukt = GdsStructBuilder::default();
         // Parse and store the header information: `dates` and `name`
-        strukt = strukt.dates(self.parse_datetimes(dates)?);
+        strukt = strukt.dates(self.parse_datetimes(dates));
         strukt = match self.next()? {
             GdsRecord::StructName(d) => strukt.name(d),
             _ => return self.fail("Missing Gds StructName"),
@@ -827,22 +844,20 @@ where
         Ok(GdsProperty { attr, value })
     }
     /// Parse from GDSII's vector of i16's format
-    fn parse_datetimes(&mut self, d: Vec<i16>) -> GdsResult<GdsDateTimes> {
-        if d.len() != 12 {
-            return self.fail("Invalid length GdsDateTimes");
+    /// Note this is one of our few parsing methods that *does not* return a `GdsResult`.
+    /// Invalid dates are instead stored as raw bytes in the [`GdsDateTime::Bytes`] variant.
+    fn parse_datetimes(&mut self, d: &[i16; 12]) -> GdsDateTimes {
+        // Note the `try/unwrap` conversions here are infallible, as their lengths are hard-coded.
+        GdsDateTimes {
+            modified: self.parse_datetime(&d[0..6].try_into().unwrap()),
+            accessed: self.parse_datetime(&d[6..12].try_into().unwrap()),
         }
-        Ok(GdsDateTimes {
-            modified: NaiveDate::from_ymd(d[0] as i32, d[1] as u32, d[2] as u32).and_hms(
-                d[3] as u32,
-                d[4] as u32,
-                d[5] as u32,
-            ),
-            accessed: NaiveDate::from_ymd(d[6] as i32, d[7] as u32, d[8] as u32).and_hms(
-                d[9] as u32,
-                d[10] as u32,
-                d[11] as u32,
-            ),
-        })
+    }
+    /// Parse a [`GdsDateTime`]
+    /// Note this is one of our few parsing methods that *does not* return a `GdsResult`.
+    /// Invalid dates are instead stored as raw bytes in the [`GdsDateTime::Bytes`] variant.
+    fn parse_datetime(&mut self, d: &[i16; 6]) -> GdsDateTime {
+        GdsDateTime::from(d)
     }
     /// Error helper for an invalid record
     fn invalid<T>(&mut self, record: GdsRecord) -> GdsResult<T> {

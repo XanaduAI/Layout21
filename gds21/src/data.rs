@@ -213,7 +213,7 @@ impl GdsFloat64 {
         // Extract the MSB Sign bit
         let neg = (val & 0x8000_0000_0000_0000) != 0;
         // Extract the 7b exponent
-        let exp: i32 = ((val & 0x7F00_0000_0000_0000) >> 8 * 7) as i32 - 64;
+        let exp: i32 = ((val & 0x7F00_0000_0000_0000) >> (8 * 7)) as i32 - 64;
         // Create the initially integer-valued mantissa from the 7 least-significant bytes
         let mantissa: u64 = val & 0x00FF_FFFF_FFFF_FFFF;
         // And apply its normalization to the range (1/16, 1)
@@ -356,7 +356,7 @@ impl GdsPoint {
         pts.iter().map(|pt| Self::new(pt.0, pt.1)).collect()
     }
     /// Convert from a two-element vector
-    pub(crate) fn parse(from: &Vec<i32>) -> GdsResult<Self> {
+    pub(crate) fn parse(from: &[i32]) -> GdsResult<Self> {
         if from.len() != 2 {
             return Err(GdsError::Str(
                 "GdsPoint coordinate vector: Invalid number of elements".into(),
@@ -388,7 +388,7 @@ impl GdsPoint {
         vec![self.x, self.y]
     }
     /// Convert an n-element vector of [GdsPoint]s to a 2n-element i32 vector.
-    pub(crate) fn flatten_vec(src: &Vec<GdsPoint>) -> Vec<i32> {
+    pub(crate) fn flatten_vec(src: &[GdsPoint]) -> Vec<i32> {
         let mut rv = Vec::with_capacity(src.len() * 2);
         for pt in src.iter() {
             rv.push(pt.x);

@@ -582,7 +582,7 @@ impl<'src> LefParser<'src> {
                 LefKey::Foreign => {
                     self.advance()?; // Eat the FOREIGN key
                     let cell_name = self.parse_ident()?;
-                    
+
                     let mut pt = None;
                     if !self.matches(TokenType::SemiColon) {
                         pt = Some(self.parse_point()?);
@@ -595,7 +595,7 @@ impl<'src> LefParser<'src> {
                     mac.foreign(LefForeign {
                         cell_name,
                         pt,
-                        orient: orient,
+                        orient,
                     })
                 }
                 LefKey::Origin => {
@@ -624,9 +624,7 @@ impl<'src> LefParser<'src> {
                     self.expect(TokenType::SemiColon)?;
                     mac.source(e)
                 }
-                LefKey::Density => {
-                    mac.density(self.parse_density()?)
-                }
+                LefKey::Density => mac.density(self.parse_density()?),
                 LefKey::End => {
                     self.advance()?; // End of Macro. Eat the END key
                     break;
@@ -822,7 +820,11 @@ impl<'src> LefParser<'src> {
                                 let p1: LefPoint = self.parse_point()?;
                                 let p2: LefPoint = self.parse_point()?;
                                 let dens_value: LefDecimal = self.parse_number()?;
-                                rects.push(LefDensityRectangle { pt1: p1, pt2: p2, density_value: dens_value });
+                                rects.push(LefDensityRectangle {
+                                    pt1: p1,
+                                    pt2: p2,
+                                    density_value: dens_value,
+                                });
                                 self.expect(TokenType::SemiColon)?;
                             }
                             _ => self.fail(LefParseErrorType::InvalidKey)?,

@@ -495,7 +495,7 @@ trait Encode {
         let mut rv = [0; 12];
         self.encode_datetime(&dts.modified, &mut rv[0..6]);
         self.encode_datetime(&dts.accessed, &mut rv[6..12]);
-        return rv;
+        rv
     }
 }
 

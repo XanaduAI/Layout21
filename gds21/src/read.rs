@@ -835,14 +835,10 @@ where
         if d.len() != 12 {
             return self.fail("Invalid length GdsDateTimes");
         }
-        let epoch = NaiveDate::from_ymd_opt(1970, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap();
         let parse_datetime = |year, month, day, hour, minute, second| {
             NaiveDate::from_ymd_opt(year, month, day)
                 .and_then(|date| date.and_hms_opt(hour, minute, second))
-                .unwrap_or(epoch)
+                .unwrap_or(NaiveDateTime::UNIX_EPOCH)
         };
         Ok(GdsDateTimes {
             modified: parse_datetime(

@@ -2,7 +2,10 @@ use super::*;
 
 /// Specified creation date for test cases
 fn test_dates() -> GdsDateTimes {
-    let test_date = NaiveDate::from_ymd(1970, 1, 1).and_hms(0, 0, 1);
+    let test_date = NaiveDate::from_ymd_opt(1970, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 1)
+        .unwrap();
     GdsDateTimes {
         modified: test_date,
         accessed: test_date,
@@ -77,6 +80,50 @@ fn it_round_trips() -> GdsResult<()> {
     let lib = GdsLibrary::load(&resource("sample1.gds"))?;
     // And check it round-trips to file
     roundtrip(&lib)?;
+    Ok(())
+}
+#[test]
+fn invalid_datetimes_preserve_geometry() -> GdsResult<()> {
+    let points = GdsPoint::vec(&[(0, 0), (0, 10), (10, 10), (10, 0), (0, 0)]);
+    let mut strukt = GdsStruct::new("cell");
+    strukt.elems.push(
+        GdsBoundary {
+            xy: points.clone(),
+            ..Default::default()
+        }
+        .into(),
+    );
+    let mut lib = GdsLibrary::new("lib");
+    lib.structs.push(strukt);
+
+    let mut bytes = Vec::new();
+    lib.write(&mut bytes)?;
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let record_len = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]) as usize;
+        let record_type = bytes[offset + 2];
+        if record_type == GdsRecordType::BgnLib as u8
+            || record_type == GdsRecordType::BgnStruct as u8
+        {
+            bytes[offset + 4..offset + record_len].fill(0);
+        }
+        offset += record_len;
+    }
+
+    let parsed = GdsLibrary::from_bytes(&bytes)?;
+    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    assert_eq!(parsed.dates.modified, epoch);
+    assert_eq!(parsed.dates.accessed, epoch);
+    assert_eq!(parsed.structs.len(), 1);
+    assert_eq!(parsed.structs[0].dates.modified, epoch);
+    assert_eq!(parsed.structs[0].dates.accessed, epoch);
+    match &parsed.structs[0].elems[0] {
+        GdsElement::GdsBoundary(boundary) => assert_eq!(boundary.xy, points),
+        element => panic!("expected boundary, got {:?}", element),
+    }
     Ok(())
 }
 #[test]
